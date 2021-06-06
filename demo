@@ -1,0 +1,51 @@
+@startuml
+autonumber 1
+
+== 故障前 ==
+User -> HA_JDBC: 提交SQL
+HA_JDBC -> HA_JDBC: SQL 语义解析
+HA_JDBC -> MQ : 获取行锁后, 发送写前日志消息
+note right of HA_JDBC
+dbName: pay_test,
+tableName: tb_test,
+rowKey: id,
+rowValue: 654321,
+updateTime: 478329423,
+sqlType: "update",
+fields: [{
+                "name": "id",
+                    "type": 1,
+                    "value": 1001
+                }, {
+                    "name": "name",
+                    "type": 2,
+                    "value": "lianlian"
+                }, {
+                    "name": "balance",
+                    "type": 3,
+                    "value": "1000.00"
+    }]
+end note
+MQ --> DB : 异步持久化.
+MQ -> HA_JDBC : 发送成功(可降级)
+HA_JDBC -> JDBC_Driver: 执行 Update SQL 后释放行锁
+JDBC_Driver -> HA_JDBC : 返回结果
+HA_JDBC -> User: 返回结果
+
+== 故障期间 ==
+autonumber 1
+User -> HA_JDBC: 提交SQL
+HA_JDBC ->  DB : 查询写前日志(WAL)
+DB -> HA_JDBC : 返回结果
+HA_JDBC -> JDBC_Driver: 查询关联 行数据
+JDBC_Driver -> HA_JDBC: 返回结果
+HA_JDBC -> HA_JDBC : 根据 WAL 和 行数据 进行一致性风险判断
+alt 存在一致性差异风险
+    HA_JDBC -> HA_JDBC: 回调 业务自定义的降级代码(举例: 接口返回 `当前交易存在风险`)
+else 不存在一致性差异风险
+    HA_JDBC -> JDBC_Driver: 执行 SQL
+    JDBC_Driver -> HA_JDBC : 返回结果
+    HA_JDBC -> User: 返回结果
+end alt
+
+@enduml
